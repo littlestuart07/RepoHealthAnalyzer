@@ -313,6 +313,29 @@ def create_app(repo_path: str | None = None) -> FastAPI:
             rows = s.cycles_for_run(run_id)
         return [{"length": r["length"], "chain": json.loads(r["path_json"])} for r in rows]
 
+    @app.get("/api/suggestions")
+    def suggestions_endpoint() -> list[dict[str, Any]]:
+        """How to break each circular import.
+
+        Computed on demand rather than stored: it needs the parse trees, and
+        re-parsing when somebody actually opens the panel is cheaper than
+        carrying a suggestions table through every scan. Flask takes about a
+        second; the panel loads after the rest of the page either way.
+        """
+        require_repo()
+        from ..analysis.cycles import find_cycles
+        from ..analysis.depgraph import build_graph, parse_all
+        from ..analysis.refactor import recommend
+        from ..ingest.git_log import source_files
+
+        root = state.root
+        languages = set(state.cfg.get("languages") or []) or None
+        files = source_files(state.repo(), state.cfg["exclude_paths"], languages)
+        graph = build_graph(root, files)
+        _, trees = parse_all(root, files)
+        cycles = find_cycles(graph.adjacency(runtime_only=True))
+        return [s.as_dict() for s in recommend(graph, cycles, trees, limit=25)]
+
     # ---------------- configuration ----------------
 
     @app.get("/api/config")

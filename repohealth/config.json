@@ -1,5 +1,0 @@
-{
-  "history_limit": 500,
-  "gatekeeper": { "complexity_spike_pct": 20.0 },
-  "thresholds": { "max_cc_per_function": 10, "max_nesting_depth": 4 }
-}

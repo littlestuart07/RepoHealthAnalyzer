@@ -19,6 +19,7 @@ from pathlib import Path
 from .analysis.blast import blast_radius, direct_dependents
 from .analysis.cycles import find_cycles, format_cycle
 from .analysis.depgraph import build_graph
+from .analysis.refactor import recommend
 from .analysis.scoring import compute_health, refactor_estimate
 from .pipeline import run_scan
 from .config import load_config
@@ -406,6 +407,49 @@ def cmd_app(args) -> int:
     return 0
 
 
+def cmd_suggest(args) -> int:
+    """Recommend how to break each circular import."""
+    from .analysis.depgraph import build_graph, parse_all
+
+    repo, root, cfg = _resolve(args.path)
+    languages = set(cfg.get("languages") or []) or None
+    files = source_files(repo, cfg["exclude_paths"], languages)
+    graph = build_graph(root, files)
+    _, trees = parse_all(root, files)
+
+    cycles = find_cycles(graph.adjacency(runtime_only=not args.include_type_only))
+    if not cycles:
+        print(f"{C.GREEN}No circular imports to fix.{C.RESET}")
+        return 0
+
+    recs = recommend(graph, cycles, trees, limit=args.top)
+    print(f"{C.CYAN}{len(cycles)}{C.RESET} circular import(s); "
+          f"showing {len(recs)} recommendation(s)\n")
+
+    for i, s in enumerate(recs, 1):
+        chain = " -> ".join(s.cycle) + f" -> {s.cycle[0]}"
+        print(f"{C.BOLD}{i}. {chain}{C.RESET}")
+        print(f"   {C.DIM}cut{C.RESET} {s.edge_from} {C.DIM}->{C.RESET} {s.edge_to}"
+              + (f" ({', '.join(s.symbols[:5])})" if s.symbols else ""))
+        tag = {"type_only": "move under TYPE_CHECKING",
+               "lazy": "import inside the function",
+               "extract": "extract a shared module",
+               "already_deferred": "no action needed"}[s.strategy]
+        colour = C.GREEN if s.confidence == "high" else C.YELLOW
+        print(f"   {colour}{tag}{C.RESET} {C.DIM}({s.confidence} confidence){C.RESET}")
+        print(f"   {C.DIM}{s.rationale}{C.RESET}")
+        for n, step in enumerate(s.steps, 1):
+            print(f"     {n}. {step}")
+        if args.diff and s.before:
+            print()
+            for ln in s.before.splitlines():
+                print(f"     {C.RED}- {ln}{C.RESET}")
+            for ln in s.after.splitlines():
+                print(f"     {C.GREEN}+ {ln}{C.RESET}")
+        print()
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="repohealth", description=__doc__)
     p.add_argument("--no-color", action="store_true")
@@ -458,6 +502,14 @@ def build_parser() -> argparse.ArgumentParser:
     sv.add_argument("--host", default="127.0.0.1")
     sv.add_argument("--port", type=int, default=8000)
     sv.set_defaults(func=cmd_serve)
+
+    sg = sub.add_parser("suggest", help="recommend how to break circular imports")
+    sg.add_argument("path", nargs="?", default=".")
+    sg.add_argument("--top", type=int, default=10)
+    sg.add_argument("--diff", action="store_true", help="show the before/after")
+    sg.add_argument("--include-type-only", action="store_true",
+                    help="also report loops that exist only for a type checker")
+    sg.set_defaults(func=cmd_suggest)
 
     c = sub.add_parser("check", help="pre-commit gatekeeper")
     c.add_argument("path", nargs="?", default=".")

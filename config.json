@@ -1,5 +1,13 @@
 {
   "history_limit": 500,
-  "gatekeeper": { "complexity_spike_pct": 20.0 },
-  "thresholds": { "max_cc_per_function": 10, "max_nesting_depth": 4 }
+  "gatekeeper": {
+    "complexity_spike_pct": 25,
+    "baseline_window": 5,
+    "min_baseline_cc": 5
+  },
+  "thresholds": {
+    "max_cc_per_function": 10,
+    "max_nesting_depth": 4,
+    "max_class_loc": 200
+  }
 }

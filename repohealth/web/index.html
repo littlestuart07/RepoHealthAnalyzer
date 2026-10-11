@@ -223,6 +223,30 @@ section{padding:30px 0;border-top:1px solid var(--rule)}
 .cyclist .len{color:var(--ink-3);font-size:11px;margin-top:2px}
 .clear{color:var(--armed);font-size:13px;padding:10px 0}
 
+.fixes{display:flex;flex-direction:column;gap:12px}
+.fix{border:1px solid var(--rule);border-radius:8px;padding:13px 15px}
+.fix .top{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:7px}
+.fix .badge{font-size:10.5px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;
+  padding:2.5px 8px;border-radius:99px;white-space:nowrap}
+.fix .badge.easy{background:var(--armed-soft);color:var(--armed)}
+.fix .badge.work{background:var(--accent-soft);color:var(--accent)}
+.fix .conf{font-size:11px;color:var(--ink-3)}
+.fix .chain{font-family:var(--mono);font-size:11.5px;color:var(--ink-2);
+  word-break:break-all;line-height:1.7;margin-bottom:7px}
+.fix .chain em{color:var(--ink-3);font-style:normal;padding:0 3px}
+.fix .cut{font-family:var(--mono);font-size:12px;color:var(--ink);margin-bottom:6px}
+.fix .cut b{color:var(--r3);font-weight:600}
+.fix .why{font-size:12.5px;color:var(--ink-2);line-height:1.5;margin-bottom:9px}
+.fix ol{margin:0 0 9px;padding-left:19px;font-size:12.5px;color:var(--ink-2);line-height:1.55}
+.fix ol li{margin-bottom:3px}
+.fix .diff{font-family:var(--mono);font-size:11.5px;line-height:1.6;border-radius:6px;
+  background:var(--sunken);padding:9px 11px;white-space:pre-wrap;word-break:break-all}
+.fix .diff .d{color:var(--r3)}
+.fix .diff .a{color:var(--armed)}
+.fix .toggle{font-size:11.5px;color:var(--ink-3);cursor:pointer;user-select:none;
+  background:none;border:0;padding:0;font-family:inherit}
+.fix .toggle:hover{color:var(--ink)}
+
 table{width:100%;border-collapse:collapse;font-size:13px}
 th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--rule)}
 th{font-size:11px;font-weight:600;color:var(--ink-2);border-bottom:1px solid var(--rule-strong);white-space:nowrap}
@@ -382,6 +406,14 @@ footer{border-top:1px solid var(--rule);padding:18px 0 40px;color:var(--ink-3);f
         <div id="cycles"></div>
       </div>
     </div>
+  </section>
+
+  <section id="fixSection" hidden>
+    <div class="shead">
+      <h2>Suggested fixes</h2>
+      <p id="fixNote"></p>
+    </div>
+    <div class="fixes" id="fixes"></div>
   </section>
 
   <section>
@@ -651,6 +683,10 @@ async function loadResults(){
   renderCycles(cycles);
   tableLimit = 25; renderTable();
   renderConfig(cfg);
+
+  // Fetched after the page is up: it re-parses the repository, so it must not
+  // hold back the score and the graph.
+  api('/api/suggestions').then(renderFixes).catch(()=>{});
 }
 
 const LABEL = {
@@ -896,6 +932,58 @@ function renderCycles(cy){
   box.innerHTML = `<ul class="cyclist">` + cy.map(c=>`
     <li><div class="chain">${c.chain.map(esc).join('<em>&rarr;</em>')}<em>&rarr;</em>${esc(c.chain[0])}</div>
     <div class="len">${c.length} files</div></li>`).join('') + `</ul>`;
+}
+
+const FIX_LABEL = {
+  type_only:        ['Move under TYPE_CHECKING', 'easy'],
+  lazy:             ['Import inside the function', 'easy'],
+  extract:          ['Extract a shared module',   'work'],
+  already_deferred: ['No action needed',          'easy'],
+};
+
+function renderFixes(list){
+  const sec = $('#fixSection'), box = $('#fixes');
+  if(!list || !list.length){ sec.hidden = true; return; }
+  sec.hidden = false;
+
+  const easy = list.filter(f=>FIX_LABEL[f.strategy][1]==='easy').length;
+  $('#fixNote').textContent = easy === list.length
+    ? `All ${list.length} can be fixed by moving an import.`
+    : `${easy} of ${list.length} need only an import moved; the rest need code to move.`;
+
+  box.innerHTML = list.map((f,i)=>{
+    const [label, tone] = FIX_LABEL[f.strategy];
+    const chain = f.cycle.map(esc).join('<em>&rarr;</em>') + '<em>&rarr;</em>' + esc(f.cycle[0]);
+    const syms = f.symbols && f.symbols.length ? ` (${esc(f.symbols.slice(0,5).join(', '))})` : '';
+    const steps = f.steps.map(s=>`<li>${esc(s)}</li>`).join('');
+    const diff = f.before ? `
+      <button class="toggle" data-i="${i}" aria-expanded="false">Show the change</button>
+      <div class="diff" id="diff${i}" hidden>${
+        f.before.split('\n').map(l=>`<span class="d">- ${esc(l)}</span>`).join('\n')
+      }\n${
+        f.after.split('\n').map(l=>`<span class="a">+ ${esc(l)}</span>`).join('\n')
+      }</div>` : '';
+    return `<div class="fix">
+      <div class="top">
+        <span class="badge ${tone}">${esc(label)}</span>
+        <span class="conf">${esc(f.confidence)} confidence</span>
+      </div>
+      <div class="chain">${chain}</div>
+      <div class="cut">cut <b>${esc(f.edge_from)}</b> &rarr; ${esc(f.edge_to)}${syms}</div>
+      <div class="why">${esc(f.rationale)}</div>
+      <ol>${steps}</ol>
+      ${diff}
+    </div>`;
+  }).join('');
+
+  box.querySelectorAll('.toggle').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const d = $('#diff'+btn.dataset.i);
+      d.hidden = !d.hidden;
+      btn.setAttribute('aria-expanded', String(!d.hidden));
+      btn.textContent = d.hidden ? 'Show the change' : 'Hide the change';
+    });
+  });
 }
 
 // ---------------- table ----------------

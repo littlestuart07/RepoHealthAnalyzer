@@ -130,11 +130,51 @@ def iter_statements(node: ast.AST):
                 queue.append(value)
 
 
+
+def type_checking_statements(tree: ast.AST) -> set[int]:
+    """id() of every statement inside an `if TYPE_CHECKING:` block.
+
+    Such an import never executes. It is a dependency for a type checker and
+    for nobody else, so it cannot cause an ImportError and cannot form a
+    runtime circular import. Counting it as one produces exactly the advice a
+    developer has already taken: Flask guards eleven of its imports this way,
+    and every one of them was being reported as a loop to go and fix.
+
+    Matched by name, on `TYPE_CHECKING`, `t.TYPE_CHECKING` or
+    `typing.TYPE_CHECKING`, which is how it is spelled in practice.
+    """
+    out: set[int] = set()
+
+    def is_guard(test: ast.AST) -> bool:
+        if isinstance(test, ast.Name):
+            return test.id == "TYPE_CHECKING"
+        if isinstance(test, ast.Attribute):
+            return test.attr == "TYPE_CHECKING"
+        return False
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.If) and is_guard(node.test):
+            for stmt in node.body:
+                for inner in ast.walk(stmt):
+                    out.add(id(inner))
+    return out
+
+
 @dataclass
 class Edge:
     from_path: str
     to_path: str
     kind: str
+    # The names imported across this edge. The refactoring advisor needs them:
+    # to break a cycle you have to know WHAT crosses the link, not just that
+    # something does. Empty when the import names a module rather than symbols
+    # from it (`import pkg.mod`), or when the language does not say.
+    names: list[str] = field(default_factory=list)
+
+    def line(self) -> str:
+        """`a.py -> b.py (Widget, render)`, for a human to read."""
+        shown = ", ".join(self.names[:4]) + ("..." if len(self.names) > 4 else "")
+        return f"{self.from_path} -> {self.to_path}" + (f" ({shown})" if shown else "")
 
 
 @dataclass
@@ -143,9 +183,12 @@ class DependencyGraph:
     edges: list[Edge] = field(default_factory=list)
     unresolved: dict[str, int] = field(default_factory=dict)
 
-    def adjacency(self) -> dict[str, list[str]]:
+    def adjacency(self, runtime_only: bool = False) -> dict[str, list[str]]:
+        """`runtime_only` drops imports that only a type checker ever follows."""
         adj: dict[str, list[str]] = {n: [] for n in self.nodes}
         for e in self.edges:
+            if runtime_only and e.kind == "type_checking":
+                continue
             if e.to_path not in adj.setdefault(e.from_path, []):
                 adj[e.from_path].append(e.to_path)
         return adj
@@ -186,33 +229,41 @@ def extract_imports(
     unresolved: list[str] = []
     pkg = _package_of(rel_path, source_root)
     seen: set[tuple[str, str]] = set()
+    deferred = type_checking_statements(tree)
 
-    def add(target: str, kind: str) -> None:
+    by_target: dict[str, Edge] = {}
+
+    def add(target: str, kind: str, names: list[str] | None = None) -> None:
         hit = _resolve(target, index)
         if hit is None:
             unresolved.append(target)
             return
-        if hit == rel_path:
-            return
-        key = (rel_path, hit)
-        if key in seen:
-            return
-        seen.add(key)
-        edges.append(Edge(rel_path, hit, kind))
+        add_hit(hit, kind, names)
 
-    def add_hit(hit: str | None, kind: str) -> bool:
+    def add_hit(hit: str | None, kind: str, names: list[str] | None = None) -> bool:
         if hit is None or hit == rel_path:
             return False
         key = (rel_path, hit)
-        if key not in seen:
-            seen.add(key)
-            edges.append(Edge(rel_path, hit, kind))
+        if key in seen:
+            # Two import statements can name the same file; the symbols from
+            # both belong on the one edge.
+            edge = by_target[hit]
+            for n in names or []:
+                if n not in edge.names:
+                    edge.names.append(n)
+            return True
+        seen.add(key)
+        edge = Edge(rel_path, hit, kind, list(names or []))
+        by_target[hit] = edge
+        edges.append(edge)
         return True
 
     for node in iter_statements(tree):
+        guarded = id(node) in deferred
+
         if isinstance(node, ast.Import):
             for alias in node.names:
-                add(alias.name, "import")
+                add(alias.name, "type_checking" if guarded else "import")
 
         elif isinstance(node, ast.ImportFrom):
             # Resolve the dotted package the names are being imported FROM.
@@ -230,6 +281,8 @@ def extract_imports(
             else:
                 base = node.module or ""
                 kind = "from"
+            if guarded:
+                kind = "type_checking"
 
             if not base and not node.names:
                 continue
@@ -242,13 +295,13 @@ def extract_imports(
             resolved_any = False
             for alias in node.names:
                 candidate = f"{base}.{alias.name}" if base else alias.name
-                if candidate in index and add_hit(index[candidate], kind):
+                if candidate in index and add_hit(index[candidate], kind, [alias.name]):
                     resolved_any = True
 
             if not resolved_any:
                 hit = _resolve(base, index) if base else None
                 if hit is not None:
-                    add_hit(hit, kind)
+                    add_hit(hit, kind, [a.name for a in node.names])
                 elif base:
                     unresolved.append(base)
 
