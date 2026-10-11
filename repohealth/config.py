@@ -14,6 +14,10 @@ DEFAULTS: dict[str, Any] = {
         "migrations/", "tests/fixtures/",
     ],
     "history_limit": 500,
+    # Which languages to analyse. Empty means every language RepoHealth
+    # supports; name a subset ("Python", "Java") to narrow a mixed repository
+    # down to the part a team actually owns.
+    "languages": [],
     "gatekeeper": {
         "enabled": True,
         "complexity_spike_pct": 20.0,

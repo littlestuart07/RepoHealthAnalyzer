@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS file_metrics (
     metric_id     INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id        INTEGER NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
     path          TEXT NOT NULL,
+    language      TEXT DEFAULT 'Python',
     cc_total      INTEGER DEFAULT 0,
     cc_max        INTEGER DEFAULT 0,
     cc_avg        REAL DEFAULT 0,

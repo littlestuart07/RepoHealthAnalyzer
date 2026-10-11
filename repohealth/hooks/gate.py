@@ -23,9 +23,9 @@ from ..config import load_config
 from ..db.store import Store
 from ..ingest.git_log import (
     open_repo,
-    python_files,
+    source_files,
     staged_blob,
-    staged_python_files,
+    staged_source_files,
 )
 
 # Building the dependency graph is the one genuinely expensive step on this
@@ -95,10 +95,11 @@ def run_gate(repo_path: str | Path = ".", spike_override: float | None = None) -
         result.elapsed = time.perf_counter() - started
         return result
 
-    staged = staged_python_files(repo, cfg["exclude_paths"])
+    languages = set(cfg.get("languages") or []) or None
+    staged = staged_source_files(repo, cfg["exclude_paths"], languages)
     result.staged = staged
     if not staged:
-        result.skipped_reason = "no staged Python files"
+        result.skipped_reason = "no staged source files"
         result.elapsed = time.perf_counter() - started
         return result
 
@@ -176,7 +177,7 @@ def run_gate(repo_path: str | Path = ".", spike_override: float | None = None) -
 
         # --- check 2: newly introduced import cycles ---
         if gk.get("block_new_cycles", True):
-            tracked = python_files(repo, cfg["exclude_paths"])
+            tracked = source_files(repo, cfg["exclude_paths"], languages)
             if len(tracked) > CYCLE_CHECK_FILE_LIMIT:
                 pass  # too large for this path; `scan` still covers it
             else:

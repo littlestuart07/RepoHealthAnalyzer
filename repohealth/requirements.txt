@@ -1,2 +1,5 @@
 GitPython>=3.1.40
 radon>=6.0.1
+
+tree-sitter>=0.23
+tree-sitter-language-pack>=1.10

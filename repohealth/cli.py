@@ -16,16 +16,17 @@ import sys
 import time
 from pathlib import Path
 
-from .analysis.blast import blast_radius, direct_dependents, rank_fragile, risk_level
-from .analysis.complexity import analyze_paths
+from .analysis.blast import blast_radius, direct_dependents
 from .analysis.cycles import find_cycles, format_cycle
 from .analysis.depgraph import build_graph
 from .analysis.scoring import compute_health, refactor_estimate
+from .pipeline import run_scan
 from .config import load_config
 from .db.store import Store
 from .hooks import installer
 from .hooks.gate import run_gate
-from .ingest.git_log import NotAGitRepo, iter_commits, open_repo, python_files
+from .ingest.git_log import NotAGitRepo, open_repo, source_files
+from .ingest.remote import CloneFailed, clone, looks_like_url
 
 
 class C:
@@ -40,6 +41,14 @@ class C:
 
 
 def _resolve(path: str):
+    # A URL is cloned into the cache first, so every command accepts one.
+    if looks_like_url(path):
+        print(f"{C.CYAN}Cloning{C.RESET} {path}")
+        try:
+            path = str(clone(path))
+        except CloneFailed as exc:
+            raise SystemExit(f"{C.RED}error:{C.RESET} {exc}")
+        print(f"{C.DIM}  into {path}{C.RESET}")
     repo = open_repo(path)
     root = Path(repo.working_tree_dir)
     cfg = load_config(root)
@@ -58,59 +67,40 @@ def cmd_scan(args) -> int:
     started = time.perf_counter()
     repo, root, cfg = _resolve(args.path)
 
-    with Store(root / cfg["db_path"]) as store:
-        repo_id = store.upsert_repo(str(root), root.name)
+    def report(phase: str, message: str) -> None:
+        if not args.quiet:
+            print(f"{C.DIM}·{C.RESET} {message}")
 
-        commits = list(iter_commits(repo, limit=cfg["history_limit"], exclude=cfg["exclude_paths"]))
-        new = store.insert_commits(repo_id, commits)
-        print(f"{C.CYAN}Ingested{C.RESET} {new} new commits ({len(commits)} scanned)")
+    summary = run_scan(root, report)
 
-        files = python_files(repo, cfg["exclude_paths"])
-        run_id = store.start_run(repo_id, store.latest_commit_sha(repo_id), kind="full")
+    print(f"{C.CYAN}Ingested{C.RESET} {summary['commits_new']} new commits "
+          f"({summary['commits_scanned']} scanned)")
+    mix = summary.get("languages") or {}
+    detail = ", ".join(f"{n} {label}" for label, n in mix.items())
+    print(f"{C.CYAN}Analyzed{C.RESET} {summary['files']} source files "
+          f"({len(summary['unparsed'])} unparsed)")
+    if detail:
+        print(f"  {C.DIM}{detail}{C.RESET}")
+    for path, err in summary["unparsed"][:5]:
+        print(f"  {C.YELLOW}skipped{C.RESET} {path}: {err}")
+    print(f"{C.CYAN}Graph{C.RESET} {summary['nodes']} nodes, "
+          f"{summary['edges']} internal edges")
 
-        metrics = analyze_paths(root, files, cfg["thresholds"])
-        store.insert_file_metrics(run_id, [m.as_row() for m in metrics])
-        failed = [m for m in metrics if not m.parsed]
-        print(f"{C.CYAN}Analyzed{C.RESET} {len(metrics)} Python files ({len(failed)} unparsed)")
-        for m in failed[:5]:
-            print(f"  {C.YELLOW}skipped{C.RESET} {m.path}: {m.parse_error}")
+    cycles = summary["cycles"]
+    if cycles:
+        print(f"{C.RED}Cycles{C.RESET} {len(cycles)} circular import chain(s) detected")
+        for c in cycles[:3]:
+            print(f"  {C.RED}!{C.RESET} {format_cycle(c)}")
+        if len(cycles) > 3:
+            print(f"  {C.DIM}... {len(cycles) - 3} more (run `repohealth cycles`){C.RESET}")
+    else:
+        print(f"{C.GREEN}Cycles{C.RESET} none detected")
 
-        graph = build_graph(root, files)
-        store.insert_dependencies(run_id, graph.edges)
-        adj, rev = graph.adjacency(), graph.reverse_adjacency()
-        print(f"{C.CYAN}Graph{C.RESET} {len(graph.nodes)} nodes, {len(graph.edges)} internal edges")
-
-        found = find_cycles(adj)
-        store.insert_cycles(run_id, found)
-        if found:
-            print(f"{C.RED}Cycles{C.RESET} {len(found)} circular import chain(s) detected")
-            for c in found[:3]:
-                print(f"  {C.RED}!{C.RESET} {format_cycle(c)}")
-            if len(found) > 3:
-                print(f"  {C.DIM}... {len(found) - 3} more (run `repohealth cycles`){C.RESET}")
-        else:
-            print(f"{C.GREEN}Cycles{C.RESET} none detected")
-
-        blast = blast_radius(rev)
-        churn = {r["path"]: r["churn"] for r in store.churn(repo_id)}
-        cc = {m.path: m.cc_total for m in metrics}
-        ranked = rank_fragile(blast, churn, cc, top=len(files) or 1)
-        all_scores = [int(r["risk_score"]) for r in ranked]
-        for r in ranked:
-            r["risk_level"] = risk_level(int(r["risk_score"]), all_scores)
-        store.insert_risk(run_id, ranked)
-
-        breakdown = compute_health(
-            [m.as_row() for m in metrics], churn,
-            {r["path"]: r["blast_radius"] for r in ranked}, found, cfg,
-        )
-        store.insert_health(run_id, breakdown.as_dict())
-        store.finish_run(run_id)
-
-        colour = C.GREEN if breakdown.score >= 80 else C.YELLOW if breakdown.score >= 60 else C.RED
-        print(f"{C.BOLD}Health{C.RESET} {colour}{breakdown.score:.0f}/100 "
-              f"({breakdown.grade}){C.RESET}")
-        print(f"{C.DIM}Run #{run_id} completed in {time.perf_counter() - started:.2f}s{C.RESET}")
+    bd = summary["health"]
+    colour = C.GREEN if bd.score >= 80 else C.YELLOW if bd.score >= 60 else C.RED
+    print(f"{C.BOLD}Health{C.RESET} {colour}{bd.score:.0f}/100 ({bd.grade}){C.RESET}")
+    print(f"{C.DIM}Run #{summary['run_id']} completed in "
+          f"{time.perf_counter() - started:.2f}s{C.RESET}")
     return 0
 
 
@@ -165,7 +155,8 @@ def cmd_cycles(args) -> int:
 
 def cmd_graph(args) -> int:
     repo, root, cfg = _resolve(args.path)
-    files = python_files(repo, cfg["exclude_paths"])
+    languages = set(cfg.get("languages") or []) or None
+    files = source_files(repo, cfg["exclude_paths"], languages)
     graph = build_graph(root, files)
     rev = graph.reverse_adjacency()
     payload = graph.to_json()
@@ -337,6 +328,84 @@ def cmd_serve(args) -> int:
     return 0
 
 
+def cmd_app(args) -> int:
+    """Start the server and open the app in the default browser."""
+    try:
+        from .api.server import serve
+    except ImportError:
+        print(f"{C.YELLOW}The app needs FastAPI, which isn't installed.{C.RESET}")
+        print(f"  {C.DIM}pip install \'repohealth-analyzer[dashboard]\'{C.RESET}")
+        return 1
+
+    import socket
+    import threading
+
+    from .launcher import open_window
+
+    # Pick a free port if the default is taken, so a second instance or an
+    # unrelated dev server does not stop the app from starting.
+    port = args.port
+    for candidate in range(args.port, args.port + 20):
+        with socket.socket() as probe:
+            if probe.connect_ex((args.host, candidate)) != 0:
+                port = candidate
+                break
+    else:
+        print(f"{C.RED}No free port in range {args.port}-{args.port + 19}.{C.RESET}")
+        return 1
+
+    url = f"http://{args.host}:{port}"
+    repo_path = None
+    if args.path:
+        try:
+            repo_path = str(Path(open_repo(args.path).working_tree_dir))
+        except NotAGitRepo:
+            print(f"{C.YELLOW}{args.path} is not a Git repository — "
+                  f"open one from the app.{C.RESET}")
+
+    print(f"{C.CYAN}RepoHealth{C.RESET} running at {C.BOLD}{url}{C.RESET}")
+    print(f"{C.DIM}Ctrl+C to stop{C.RESET}")
+
+    if args.no_browser:
+        try:
+            serve(repo_path, host=args.host, port=port)
+        except KeyboardInterrupt:
+            print(f"\n{C.DIM}Stopped.{C.RESET}")
+        return 0
+
+    if args.window:
+        # pywebview must own the main thread, so the server goes to a daemon
+        # thread and the window call blocks here until the user closes it.
+        server = threading.Thread(
+            target=lambda: serve(repo_path, host=args.host, port=port), daemon=True
+        )
+        server.start()
+        import time
+        time.sleep(1.0)
+        route = open_window(url)
+        if route == "chrome":
+            print(f"{C.DIM}Opened in an app window. Close this terminal to stop.{C.RESET}")
+            try:
+                server.join()
+            except KeyboardInterrupt:
+                print(f"\n{C.DIM}Stopped.{C.RESET}")
+        elif route == "browser":
+            print(f"{C.DIM}No Chromium-family browser found — opened a normal "
+                  f"browser tab instead.{C.RESET}")
+            try:
+                server.join()
+            except KeyboardInterrupt:
+                print(f"\n{C.DIM}Stopped.{C.RESET}")
+        return 0
+
+    threading.Timer(1.0, lambda: __import__('webbrowser').open(url)).start()
+    try:
+        serve(repo_path, host=args.host, port=port)
+    except KeyboardInterrupt:
+        print(f"\n{C.DIM}Stopped.{C.RESET}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="repohealth", description=__doc__)
     p.add_argument("--no-color", action="store_true")
@@ -344,6 +413,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("scan", help="ingest history, analyze complexity and dependencies")
     s.add_argument("path", nargs="?", default=".")
+    s.add_argument("--quiet", action="store_true", help="suppress phase messages")
     s.set_defaults(func=cmd_scan)
 
     r = sub.add_parser("report", help="risk summary of the latest run")
@@ -373,7 +443,17 @@ def build_parser() -> argparse.ArgumentParser:
     sc.add_argument("--top", type=int, default=10)
     sc.set_defaults(func=cmd_score)
 
-    sv = sub.add_parser("serve", help="run the local dashboard API")
+    ap = sub.add_parser("app", help="open the RepoHealth app in your browser")
+    ap.add_argument("path", nargs="?", default=".")
+    ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--port", type=int, default=8000)
+    ap.add_argument("--window", action="store_true",
+                    help="open in its own window instead of a browser tab")
+    ap.add_argument("--no-browser", action="store_true",
+                    help="start the server only")
+    ap.set_defaults(func=cmd_app)
+
+    sv = sub.add_parser("serve", help="run the server without opening a browser")
     sv.add_argument("path", nargs="?", default=".")
     sv.add_argument("--host", default="127.0.0.1")
     sv.add_argument("--port", type=int, default=8000)

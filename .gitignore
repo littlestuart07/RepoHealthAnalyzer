@@ -8,3 +8,9 @@ build/
 dist/
 .pytest_cache/
 graph.json
+
+repohealth.backup-*/
+.repohealth/
+tmp-pkg/
+
+Install-MultiLang.ps1

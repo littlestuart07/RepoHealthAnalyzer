@@ -5,123 +5,224 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RepoHealth</title>
 <!-- No external requests: d3 is served from this machine and type uses the
-     system stack, so the dashboard works with the network off. -->
+     system stack, so the app works with the network off. -->
 <script src="/static/d3.min.js"></script>
 <style>
 :root{
   color-scheme: light;
-  --surface:#FAFAFC; --raised:#FFFFFF; --sunken:#F2F3F7;
+  --surface:#FAFAFC; --raised:#FFFFFF; --sunken:#F2F3F7; --bar:#FFFFFF;
   --ink:#15171C; --ink-2:#5A6070; --ink-3:#878DA0;
   --rule:#E2E5EC; --rule-strong:#CBD0DC;
-  --accent:#2a78d6;
+  --accent:#2a78d6; --accent-soft:#E8F0FB;
   --r1:#E9A79F; --r2:#CE5B50; --r3:#9E241D;
-  --ok:#0ca30c;
+  --armed:#0ca30c; --armed-soft:#E7F6E7;
   --shadow:0 1px 2px rgba(21,23,28,.06);
+  --bar-shadow:0 1px 0 var(--rule);
+  --sans:ui-sans-serif,-apple-system,"Segoe UI Variable Text","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --mono:ui-monospace,"SF Mono","Cascadia Mono","JetBrains Mono","Roboto Mono",Menlo,Consolas,monospace;
 }
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]){
     color-scheme: dark;
-    --surface:#14161B; --raised:#1B1E25; --sunken:#101217;
+    --surface:#14161B; --raised:#1B1E25; --sunken:#101217; --bar:#1B1E25;
     --ink:#E9ECF3; --ink-2:#99A0B0; --ink-3:#6E7585;
     --rule:#2A2E38; --rule-strong:#3B4050;
-    --accent:#3987e5;
+    --accent:#3987e5; --accent-soft:#1A2838;
     --r1:#7E423B; --r2:#C9594E; --r3:#F0958B;
-    --ok:#3ec93e;
+    --armed:#3ec93e; --armed-soft:#162A16;
     --shadow:0 1px 2px rgba(0,0,0,.4);
   }
 }
 :root[data-theme="dark"]{
   color-scheme: dark;
-  --surface:#14161B; --raised:#1B1E25; --sunken:#101217;
+  --surface:#14161B; --raised:#1B1E25; --sunken:#101217; --bar:#1B1E25;
   --ink:#E9ECF3; --ink-2:#99A0B0; --ink-3:#6E7585;
   --rule:#2A2E38; --rule-strong:#3B4050;
-  --accent:#3987e5;
+  --accent:#3987e5; --accent-soft:#1A2838;
   --r1:#7E423B; --r2:#C9594E; --r3:#F0958B;
-  --ok:#3ec93e;
+  --armed:#3ec93e; --armed-soft:#162A16;
   --shadow:0 1px 2px rgba(0,0,0,.4);
 }
 
 *{box-sizing:border-box}
+/* A class that sets `display` outranks the UA stylesheet's [hidden] rule, so
+   every hidden stage would render at once without this. */
+[hidden]{display:none!important}
 html,body{margin:0;padding:0}
 body{
   background:var(--surface); color:var(--ink);
-  font-family:ui-sans-serif,-apple-system,"Segoe UI Variable Text","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
-  font-size:15px; line-height:1.5;
+  font-family:var(--sans); font-size:15px; line-height:1.5;
   -webkit-font-smoothing:antialiased;
 }
-.mono{font-family:ui-monospace,"SF Mono","Cascadia Mono","JetBrains Mono","Roboto Mono",Menlo,Consolas,monospace;font-variant-ligatures:none}
-.num{font-family:ui-monospace,"SF Mono","Cascadia Mono","JetBrains Mono","Roboto Mono",Menlo,Consolas,monospace;font-variant-numeric:tabular-nums}
+.mono,.num{font-family:var(--mono)}
+.num{font-variant-numeric:tabular-nums}
+.wrap{max-width:1180px;margin:0 auto;padding:0 20px}
 
-.wrap{max-width:1180px;margin:0 auto;padding:0 16px}
-
-/* ---------- header ---------- */
-header{border-bottom:1px solid var(--rule);background:var(--raised)}
-.bar{display:flex;align-items:baseline;gap:20px;padding:14px 0;flex-wrap:wrap}
-.brand{font-weight:600;letter-spacing:-.01em;margin:0;font-size:16px}
-.brand span{color:var(--ink-3);font-weight:400}
-.bar .meta{color:var(--ink-2);font-size:13px;display:flex;gap:18px;margin-left:auto;align-items:baseline;flex-wrap:wrap}
-button.ghost{
-  font:inherit;font-size:13px;color:var(--ink-2);background:none;
-  border:1px solid var(--rule-strong);border-radius:4px;padding:3px 9px;cursor:pointer;
+/* ---------------- top bar: the app's three verbs ---------------- */
+.topbar{
+  position:sticky;top:0;z-index:30;background:var(--bar);
+  box-shadow:var(--bar-shadow);
 }
-button.ghost:hover{color:var(--ink);border-color:var(--ink-3)}
-button.ghost:focus-visible,a:focus-visible,th[role=button]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.topbar .inner{display:flex;align-items:center;gap:14px;height:56px}
+.mark{font-weight:600;letter-spacing:-.01em;font-size:15px;white-space:nowrap}
+.repopick{
+  display:flex;align-items:center;gap:7px;font:inherit;font-size:13px;
+  background:var(--sunken);border:1px solid var(--rule);border-radius:7px;
+  padding:5px 10px;cursor:pointer;color:var(--ink);max-width:340px;
+}
+.repopick:hover{border-color:var(--rule-strong)}
+.repopick .nm{font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.repopick .caret{color:var(--ink-3);font-size:10px}
+.spacer{margin-left:auto}
 
-/* ---------- hero: score and its derivation ---------- */
-.hero{display:grid;grid-template-columns:minmax(200px,260px) 1fr;gap:40px;padding:36px 0 32px;align-items:start}
-.scorebox .figure{font-size:88px;line-height:.9;font-weight:600;letter-spacing:-.04em;font-family:ui-monospace,"SF Mono","Cascadia Mono","JetBrains Mono","Roboto Mono",Menlo,Consolas,monospace;font-variant-numeric:tabular-nums}
-.scorebox .of{font-size:22px;color:var(--ink-3);font-weight:400}
-.scorebox .grade{margin-top:10px;font-size:14px;color:var(--ink-2)}
-.scorebox .grade b{color:var(--ink);font-weight:600}
-.derivation h2,.panel h2{font-size:13px;font-weight:600;margin:0 0 14px;color:var(--ink-2)}
-.pen{display:grid;grid-template-columns:132px 1fr 62px;gap:12px;align-items:center;margin-bottom:9px;font-size:13px}
-.pen .track{display:block;height:9px;background:var(--sunken);border-radius:0 5px 5px 0;position:relative;overflow:hidden}
-.pen .fill{display:block;height:100%;background:var(--accent);border-radius:0 5px 5px 0;transition:width .5s cubic-bezier(.2,.7,.3,1)}
-.pen .val{text-align:right;color:var(--ink-2)}
-.facts{margin-top:18px;padding-top:14px;border-top:1px solid var(--rule);color:var(--ink-2);font-size:13px;display:flex;gap:22px;flex-wrap:wrap}
-.facts b{color:var(--ink);font-weight:600}
+button{font:inherit;cursor:pointer}
+.btn{
+  font-size:13px;font-weight:500;border-radius:7px;padding:6px 13px;
+  border:1px solid var(--rule-strong);background:var(--raised);color:var(--ink);
+}
+.btn:hover{border-color:var(--ink-3)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn[disabled]{opacity:.5;cursor:default;filter:none}
+.btn.icon{padding:6px 9px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
-/* ---------- sections ---------- */
+/* the gate switch -- the control that makes this more than a report */
+.gate{
+  display:flex;align-items:center;gap:8px;font-size:13px;
+  border:1px solid var(--rule-strong);border-radius:7px;padding:5px 11px 5px 9px;
+  background:var(--raised);color:var(--ink-2);
+}
+.gate[data-on="true"]{
+  background:var(--armed-soft);border-color:transparent;color:var(--ink);
+}
+.gate .lamp{
+  width:7px;height:7px;border-radius:50%;background:var(--ink-3);flex:none;
+}
+.gate[data-on="true"] .lamp{background:var(--armed)}
+.gate[disabled]{opacity:.45;cursor:default}
+
+/* ---------------- full-page states ---------------- */
+.stage{min-height:calc(100vh - 56px);display:grid;place-items:center;padding:40px 20px}
+.panelcard{
+  width:100%;max-width:520px;background:var(--raised);
+  border:1px solid var(--rule);border-radius:14px;padding:30px;box-shadow:var(--shadow);
+}
+.panelcard h2{margin:0 0 8px;font-size:20px;font-weight:600;letter-spacing:-.015em}
+.panelcard p{margin:0 0 20px;color:var(--ink-2);font-size:14px}
+.field{display:flex;gap:8px}
+.field input{
+  flex:1;font-family:var(--mono);font-size:13px;padding:9px 11px;
+  background:var(--surface);color:var(--ink);
+  border:1px solid var(--rule-strong);border-radius:7px;min-width:0;
+}
+.field input:focus{outline:2px solid var(--accent);outline-offset:-1px;border-color:transparent}
+.hint{font-size:12px;color:var(--ink-3);margin-top:9px}
+.formerr{color:var(--r3);font-size:13px;margin-top:11px;min-height:18px}
+
+.recents{list-style:none;margin:22px 0 0;padding:20px 0 0;border-top:1px solid var(--rule)}
+.recents .cap{font-size:12px;color:var(--ink-3);margin-bottom:9px}
+.recents li button{
+  display:block;width:100%;text-align:left;background:none;border:0;
+  padding:7px 9px;border-radius:6px;color:var(--ink);
+}
+.recents li button:hover{background:var(--sunken)}
+.recents .nm{display:block;font-size:13px;font-weight:500}
+.recents .pt{display:block;font-family:var(--mono);font-size:11px;color:var(--ink-3);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* scan progress */
+.phases{list-style:none;margin:0;padding:0}
+.phases li{
+  display:flex;align-items:center;gap:11px;padding:7px 0;
+  font-size:14px;color:var(--ink-3);
+}
+.phases li .dot{
+  width:16px;height:16px;border-radius:50%;flex:none;
+  border:1.5px solid var(--rule-strong);display:grid;place-items:center;
+  font-size:9px;color:var(--raised);
+}
+.phases li[data-s="done"]{color:var(--ink-2)}
+.phases li[data-s="done"] .dot{background:var(--accent);border-color:var(--accent)}
+.phases li[data-s="done"] .dot::after{content:"✓"}
+.phases li[data-s="active"]{color:var(--ink);font-weight:500}
+.phases li[data-s="active"] .dot{
+  border-color:var(--accent);border-top-color:transparent;
+  animation:spin .7s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){
+  .phases li[data-s="active"] .dot{animation:none;border-top-color:var(--accent)}
+}
+
+/* ---------------- hero ---------------- */
+.hero{display:grid;grid-template-columns:auto 1fr;gap:44px;padding:36px 0 30px;align-items:start}
+.scoreblk{display:flex;flex-direction:column;gap:14px}
+.figure{
+  font-family:var(--mono);font-variant-numeric:tabular-nums;
+  font-size:84px;line-height:.86;font-weight:600;letter-spacing:-.045em;
+}
+.figure .of{font-size:21px;color:var(--ink-3);font-weight:400;letter-spacing:0}
+.verdict{font-size:14px;color:var(--ink-2)}
+.verdict b{color:var(--ink);font-weight:600}
+#trend{display:block}
+.trendcap{font-size:12px;color:var(--ink-3);margin-top:5px}
+
+.breakdown h2{font-size:13px;font-weight:600;margin:0 0 14px;color:var(--ink-2)}
+.pen{display:grid;grid-template-columns:140px 1fr 58px;gap:13px;align-items:center;
+  margin-bottom:9px;font-size:13px}
+.pen .track{display:block;height:9px;background:var(--sunken);border-radius:0 5px 5px 0;overflow:hidden}
+.pen .fill{display:block;height:100%;background:var(--accent);border-radius:0 5px 5px 0;
+  width:0;transition:width .5s cubic-bezier(.2,.7,.3,1)}
+.pen .val{text-align:right;color:var(--ink-2);font-family:var(--mono)}
+.facts{margin-top:18px;padding-top:15px;border-top:1px solid var(--rule);
+  color:var(--ink-2);font-size:13px;display:flex;gap:24px;flex-wrap:wrap}
+.facts b{color:var(--ink);font-weight:600;font-family:var(--mono)}
+.langs{margin-top:11px;display:flex;gap:7px;flex-wrap:wrap}
+.langs .chip{font-size:11.5px;font-family:var(--mono);color:var(--ink-2);
+  border:1px solid var(--rule);border-radius:99px;padding:2px 9px;white-space:nowrap}
+.langs .chip b{color:var(--ink);font-weight:600}
+
+/* ---------------- sections ---------------- */
 section{padding:30px 0;border-top:1px solid var(--rule)}
 .shead{display:flex;align-items:baseline;gap:14px;margin-bottom:18px;flex-wrap:wrap}
-.shead h2{font-size:17px;font-weight:600;margin:0;letter-spacing:-.01em}
+.shead h2{font-size:17px;font-weight:600;margin:0;letter-spacing:-.012em}
 .shead p{margin:0;color:var(--ink-2);font-size:13px}
-.shead .right{margin-left:auto;display:flex;gap:10px;align-items:center}
+.shead .right{margin-left:auto;display:flex;gap:16px;align-items:center}
 
-/* ---------- graph ---------- */
-#graph{width:100%;height:520px;background:var(--raised);border:1px solid var(--rule);border-radius:6px;display:block;touch-action:none}
+#graph{width:100%;height:520px;background:var(--raised);border:1px solid var(--rule);
+  border-radius:10px;display:block;touch-action:none}
 .node{cursor:pointer;stroke:var(--raised);stroke-width:1.5}
 .node.dim{opacity:.12}
 .link{stroke:var(--rule-strong);stroke-width:1;fill:none}
 .link.cyc{stroke:var(--r3);stroke-width:1.6}
 .link.hot{stroke:var(--accent);stroke-width:2}
 .link.dim{opacity:.07}
-.nlabel{font-family:ui-monospace,"SF Mono","Cascadia Mono","JetBrains Mono","Roboto Mono",Menlo,Consolas,monospace;font-size:9px;fill:var(--ink-2);pointer-events:none}
+.nlabel{font-family:var(--mono);font-size:9px;fill:var(--ink-2);pointer-events:none}
 .nlabel.dim{opacity:.1}
 .key{display:flex;gap:16px;color:var(--ink-2);font-size:12px;align-items:center;flex-wrap:wrap}
-.key i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:-1px}
-.ramp{display:inline-flex;align-items:center;gap:0;vertical-align:-2px}
+.ramp{display:inline-flex;vertical-align:-2px}
 .ramp b{width:16px;height:9px;display:inline-block}
 
-/* ---------- two-up ---------- */
-.two{display:grid;grid-template-columns:1.15fr .85fr;gap:28px}
-.panel{background:var(--raised);border:1px solid var(--rule);border-radius:6px;padding:18px}
+.two{display:grid;grid-template-columns:1.12fr .88fr;gap:26px}
+.card{background:var(--raised);border:1px solid var(--rule);border-radius:10px;padding:18px}
+.card h2{font-size:13px;font-weight:600;margin:0 0 14px;color:var(--ink-2)}
 #scatter{width:100%;height:290px;display:block}
 .axlabel{font-size:11px;fill:var(--ink-3)}
 .tick line{stroke:var(--rule)}
-.tick text{fill:var(--ink-3);font-size:10px;font-family:ui-monospace,"SF Mono","Cascadia Mono","JetBrains Mono","Roboto Mono",Menlo,Consolas,monospace}
+.tick text{fill:var(--ink-3);font-size:10px;font-family:var(--mono)}
 .domain{stroke:var(--rule-strong)}
-.dot{cursor:pointer;stroke:var(--raised);stroke-width:1.5}
+.dot2{cursor:pointer;stroke:var(--raised);stroke-width:1.5}
+.note{color:var(--ink-3);font-size:12px;margin:8px 0 0}
 
-.cyclist{list-style:none;margin:0;padding:0;max-height:290px;overflow-y:auto}
+.cyclist{list-style:none;margin:0;padding:0;max-height:292px;overflow-y:auto}
 .cyclist li{padding:9px 0;border-bottom:1px solid var(--rule);font-size:12px}
 .cyclist li:last-child{border-bottom:0}
-.cyclist .chain{font-family:ui-monospace,"SF Mono","Cascadia Mono","JetBrains Mono","Roboto Mono",Menlo,Consolas,monospace;color:var(--ink);word-break:break-all;line-height:1.7}
+.cyclist .chain{font-family:var(--mono);color:var(--ink);word-break:break-all;line-height:1.75}
 .cyclist .chain em{color:var(--ink-3);font-style:normal;padding:0 3px}
-.cyclist .len{color:var(--ink-3);font-size:11px}
-.clean{color:var(--ok);font-size:13px;display:flex;gap:7px;align-items:center;padding:10px 0}
+.cyclist .len{color:var(--ink-3);font-size:11px;margin-top:2px}
+.clear{color:var(--armed);font-size:13px;padding:10px 0}
 
-/* ---------- table ---------- */
 table{width:100%;border-collapse:collapse;font-size:13px}
 th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--rule)}
 th{font-size:11px;font-weight:600;color:var(--ink-2);border-bottom:1px solid var(--rule-strong);white-space:nowrap}
@@ -129,81 +230,129 @@ th[role=button]{cursor:pointer;user-select:none}
 th[role=button]:hover{color:var(--ink)}
 th.r,td.r{text-align:right}
 tbody tr{cursor:pointer}
-tbody tr:hover{background:var(--sunken)}
-tbody tr.on{background:var(--sunken)}
-td.path{font-family:ui-monospace,"SF Mono","Cascadia Mono","JetBrains Mono","Roboto Mono",Menlo,Consolas,monospace;font-size:12px;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+tbody tr:hover,tbody tr.on{background:var(--sunken)}
+td.path{font-family:var(--mono);font-size:12px;max-width:330px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .lvl{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
 .lvl i{width:8px;height:8px;border-radius:50%;flex:none}
-.cyc-tag{font-size:10px;color:var(--r3);border:1px solid currentColor;border-radius:3px;padding:0 4px;margin-left:6px;vertical-align:1px}
-.drv{color:var(--ink-3);font-size:11px}
+.cyctag{font-size:10px;color:var(--r3);border:1px solid currentColor;
+  border-radius:3px;padding:0 4px;margin-left:6px;vertical-align:1px}
 
-/* ---------- config ---------- */
-.cfg{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:16px}
+.cfg{display:grid;grid-template-columns:repeat(auto-fit,minmax(192px,1fr));gap:16px}
 .cfg label{display:block;font-size:12px;color:var(--ink-2);margin-bottom:5px}
-.cfg input{
-  width:100%;font-family:ui-monospace,"SF Mono","Cascadia Mono","JetBrains Mono","Roboto Mono",Menlo,Consolas,monospace;font-size:13px;padding:6px 8px;
-  background:var(--surface);color:var(--ink);border:1px solid var(--rule-strong);border-radius:4px;
-}
+.cfg input{width:100%;font-family:var(--mono);font-size:13px;padding:7px 9px;
+  background:var(--surface);color:var(--ink);border:1px solid var(--rule-strong);border-radius:6px}
 .cfg input:focus{outline:2px solid var(--accent);outline-offset:-1px;border-color:transparent}
-.cfgfoot{margin-top:16px;display:flex;gap:12px;align-items:center}
-button.primary{
-  font:inherit;font-size:13px;font-weight:500;background:var(--accent);color:#fff;
-  border:0;border-radius:4px;padding:7px 14px;cursor:pointer;
-}
-button.primary:hover{filter:brightness(1.08)}
-button.primary:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
-.saved{color:var(--ok);font-size:13px;opacity:0;transition:opacity .2s}
+.cfgfoot{margin-top:17px;display:flex;gap:12px;align-items:center}
+.saved{font-size:13px;opacity:0;transition:opacity .2s;color:var(--armed)}
 .saved.show{opacity:1}
 
-/* ---------- tooltip ---------- */
-#tip{
-  position:fixed;pointer-events:none;z-index:50;opacity:0;transition:opacity .1s;
-  background:var(--raised);border:1px solid var(--rule-strong);border-radius:5px;
-  box-shadow:var(--shadow);padding:9px 11px;font-size:12px;max-width:290px;
-}
+#tip{position:fixed;pointer-events:none;z-index:50;opacity:0;transition:opacity .1s;
+  background:var(--raised);border:1px solid var(--rule-strong);border-radius:7px;
+  box-shadow:var(--shadow);padding:9px 11px;font-size:12px;max-width:290px}
 #tip.show{opacity:1}
-#tip .tp{font-family:ui-monospace,"SF Mono","Cascadia Mono","JetBrains Mono","Roboto Mono",Menlo,Consolas,monospace;font-size:11px;color:var(--ink);word-break:break-all;margin-bottom:5px}
+#tip .tp{font-family:var(--mono);font-size:11px;color:var(--ink);word-break:break-all;margin-bottom:5px}
 #tip dl{margin:0;display:grid;grid-template-columns:auto auto;gap:1px 12px;font-size:11px}
 #tip dt{color:var(--ink-2)}
-#tip dd{margin:0;text-align:right;font-family:ui-monospace,"SF Mono","Cascadia Mono","JetBrains Mono","Roboto Mono",Menlo,Consolas,monospace}
+#tip dd{margin:0;text-align:right;font-family:var(--mono)}
 
-.err{padding:40px 0;color:var(--ink-2);font-size:14px}
-.err code{font-family:ui-monospace,"SF Mono","Cascadia Mono","JetBrains Mono","Roboto Mono",Menlo,Consolas,monospace;background:var(--sunken);padding:2px 6px;border-radius:3px;color:var(--ink)}
+/* modal */
+dialog{
+  border:1px solid var(--rule);border-radius:14px;padding:0;background:var(--raised);
+  color:var(--ink);box-shadow:0 12px 40px rgba(0,0,0,.18);max-width:520px;width:calc(100% - 40px);
+}
+dialog::backdrop{background:rgba(10,12,16,.45)}
+dialog .body{padding:26px}
+dialog h2{margin:0 0 8px;font-size:18px;font-weight:600}
+dialog p{margin:0 0 18px;color:var(--ink-2);font-size:14px}
+
 footer{border-top:1px solid var(--rule);padding:18px 0 40px;color:var(--ink-3);font-size:12px}
 
-@media (max-width:860px){
-  .hero{grid-template-columns:1fr;gap:26px;padding:26px 0}
-  .scorebox .figure{font-size:64px}
+@media (max-width:880px){
+  .hero{grid-template-columns:1fr;gap:28px;padding:26px 0}
+  .figure{font-size:62px}
   .two{grid-template-columns:1fr}
   #graph{height:400px}
-  .pen{grid-template-columns:96px 1fr 50px}
+  .pen{grid-template-columns:100px 1fr 50px}
+  .topbar .inner{height:auto;padding:10px 0;flex-wrap:wrap}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
 <body>
 
-<header>
-  <div class="wrap bar">
-    <h1 class="brand">RepoHealth <span id="repo">—</span></h1>
-    <div class="meta">
-      <span id="runmeta"></span>
-      <button class="ghost" id="theme" aria-label="Switch colour theme">Theme</button>
-    </div>
+<header class="topbar">
+  <div class="wrap inner">
+    <span class="mark">RepoHealth</span>
+    <button class="repopick" id="repoBtn" hidden>
+      <span class="nm" id="repoName"></span><span class="caret">▾</span>
+    </button>
+    <span class="spacer"></span>
+    <button class="btn" id="scanBtn" hidden>Scan</button>
+    <button class="gate" id="gateBtn" hidden>
+      <span class="lamp"></span><span id="gateLabel">Commit gate off</span>
+    </button>
+    <button class="btn icon" id="themeBtn" title="Switch colour theme" aria-label="Switch colour theme">◐</button>
   </div>
 </header>
 
-<main class="wrap" id="main" hidden>
+<!-- no repository open -->
+<div class="stage" id="stageOpen" hidden>
+  <div class="panelcard">
+    <h2>Open a repository</h2>
+    <p>Paste a folder path, or a GitHub URL to download and analyse. Nothing is uploaded — analysis runs here on this machine.</p>
+    <form class="field" id="openForm">
+      <input id="pathInput" placeholder="E:\my-project  or  https://github.com/pallets/flask" spellcheck="false" autocomplete="off">
+      <button class="btn primary" type="submit">Open</button>
+    </form>
+    <div class="hint">A local folder must contain a <span class="mono">.git</span> folder. A URL is cloned into <span class="mono">~/.repohealth/clones</span>.</div>
+    <div class="formerr" id="openErr"></div>
+    <ul class="recents" id="recents" hidden></ul>
+  </div>
+</div>
+
+<!-- opened, never scanned -->
+<div class="stage" id="stageScan" hidden>
+  <div class="panelcard">
+    <h2>Analyse this repository</h2>
+    <p>RepoHealth reads the commit history, measures every Python file, and maps how they depend on each other. This takes a second or two for most projects.</p>
+    <button class="btn primary" id="firstScanBtn">Start analysis</button>
+  </div>
+</div>
+
+<!-- scanning -->
+<div class="stage" id="stageProgress" hidden>
+  <div class="panelcard">
+    <h2 id="progTitle">Analysing</h2>
+    <p id="progRepo" class="mono"></p>
+    <ul class="phases" id="phaseList"></ul>
+    <div class="formerr" id="progErr"></div>
+  </div>
+</div>
+
+<!-- results -->
+<main class="wrap" id="stageMain" hidden>
+  <p id="shallowNote" class="note" hidden style="margin:18px 0 -10px">
+    This is a shallow clone, so only recent history is present and churn counts
+    are lower than the repository's real figures.
+  </p>
 
   <div class="hero">
-    <div class="scorebox">
-      <div><span class="figure" id="score">—</span><span class="of">/100</span></div>
-      <div class="grade">Grade <b id="grade">—</b> · <span id="verdict"></span></div>
+    <div class="scoreblk">
+      <div>
+        <span class="figure" id="score">—</span><span class="of">/100</span>
+      </div>
+      <div class="verdict">Grade <b id="grade">—</b> · <span id="verdictText"></span></div>
+      <div>
+        <svg id="trend" role="img" aria-label="Health score across previous runs"></svg>
+        <div class="trendcap" id="trendCap"></div>
+      </div>
     </div>
-    <div class="derivation">
+    <div class="breakdown">
       <h2>Where the points went</h2>
       <div id="pens"></div>
       <div class="facts" id="facts"></div>
+      <div class="langs" id="langs"></div>
     </div>
   </div>
 
@@ -214,8 +363,7 @@ footer{border-top:1px solid var(--rule);padding:18px 0 40px;color:var(--ink-3);f
       <div class="right key">
         <span>risk
           <span class="ramp"><b style="background:var(--r1)"></b><b style="background:var(--r2)"></b><b style="background:var(--r3)"></b></span>
-          low to high
-        </span>
+          low to high</span>
         <span><svg width="22" height="8"><line x1="1" y1="4" x2="21" y2="4" stroke="var(--r3)" stroke-width="1.6"/></svg> in a cycle</span>
       </div>
     </div>
@@ -224,12 +372,12 @@ footer{border-top:1px solid var(--rule);padding:18px 0 40px;color:var(--ink-3);f
 
   <section>
     <div class="two">
-      <div class="panel">
+      <div class="card">
         <h2>Churn against complexity</h2>
         <svg id="scatter" role="img" aria-label="Scatter plot of code churn against cyclomatic complexity"></svg>
-        <p class="drv" style="margin:6px 0 0">Top right is where debt accrues: files that are both edited often and complex.</p>
+        <p class="note">Top right is where debt accrues: files that are both edited often and complex.</p>
       </div>
-      <div class="panel">
+      <div class="card">
         <h2>Circular imports</h2>
         <div id="cycles"></div>
       </div>
@@ -255,52 +403,76 @@ footer{border-top:1px solid var(--rule);padding:18px 0 40px;color:var(--ink-3);f
         <tbody></tbody>
       </table>
     </div>
-    <button class="ghost" id="more" hidden style="margin-top:14px"></button>
+    <button class="btn" id="moreBtn" hidden style="margin-top:14px"></button>
   </section>
 
   <section>
     <div class="shead">
-      <h2>Gatekeeper thresholds</h2>
-      <p>Saved to config.json in the analysed repository. Takes effect on the next commit.</p>
+      <h2>Gate thresholds</h2>
+      <p>Saved to <span class="mono">config.json</span> in this repository. Applies to your next commit.</p>
     </div>
-    <div class="panel">
+    <div class="card">
       <div class="cfg" id="cfg"></div>
       <div class="cfgfoot">
-        <button class="primary" id="save">Save thresholds</button>
-        <span class="saved" id="savedmsg">Saved</span>
+        <button class="btn primary" id="saveCfg">Save thresholds</button>
+        <span class="saved" id="savedMsg"></span>
       </div>
     </div>
   </section>
+
+  <footer>Analysis runs locally. Nothing leaves this machine.</footer>
 </main>
 
-<div class="wrap err" id="err" hidden></div>
-<footer class="wrap">Analysis runs locally. Nothing leaves this machine.</footer>
+<dialog id="repoDialog">
+  <div class="body">
+    <h2>Open a repository</h2>
+    <p>Open a folder on this machine, or paste a repository URL.</p>
+    <form class="field" id="switchForm">
+      <input id="switchInput" placeholder="Folder path or repository URL" spellcheck="false" autocomplete="off">
+      <button class="btn primary" type="submit">Open</button>
+    </form>
+    <div class="formerr" id="switchErr"></div>
+    <ul class="recents" id="switchRecents" hidden></ul>
+    <div style="margin-top:20px;text-align:right">
+      <button class="btn" id="closeDialog">Cancel</button>
+    </div>
+  </div>
+</dialog>
+
 <div id="tip" role="tooltip"></div>
 
 <script>
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
-
-// risk is ordered magnitude -> sequential ramp; the text label always rides along
 const RISK = { low:'var(--r1)', medium:'var(--r2)', high:'var(--r3)' };
-const VERDICT = s => s>=90?'in good shape':s>=80?'holding up':s>=70?'showing strain':s>=60?'accumulating debt':'needs attention';
+const VERDICT = s => s>=90?'in good shape':s>=80?'holding up':s>=70?'showing strain'
+                    :s>=60?'accumulating debt':'needs attention';
 
-let DATA = {};
+let SESSION = {}, DATA = {}, PHASES = [], pollTimer = null;
 
-async function get(p){
-  const r = await fetch(p);
-  if(!r.ok) throw new Error((await r.json().catch(()=>({}))).detail || `${p} returned ${r.status}`);
-  return r.json();
+async function api(path, opts){
+  const r = await fetch(path, opts);
+  let body = null;
+  try { body = await r.json(); } catch { /* empty body */ }
+  if(!r.ok) throw new Error((body && body.detail) || `${path} returned ${r.status}`);
+  return body;
+}
+const post = (p, data) => api(p, {
+  method:'POST', headers:{'Content-Type':'application/json'},
+  body: JSON.stringify(data || {})
+});
+
+function showStage(which){
+  for(const id of ['stageOpen','stageScan','stageProgress','stageMain'])
+    $('#'+id).hidden = (id !== which);
 }
 
-// ---------- tooltip ----------
+// ---------------- tooltip ----------------
 const tip = $('#tip');
 function showTip(ev, title, rows){
   tip.innerHTML = `<div class="tp">${esc(title)}</div><dl>` +
     rows.map(([k,v])=>`<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('') + `</dl>`;
-  tip.classList.add('show');
-  moveTip(ev);
+  tip.classList.add('show'); moveTip(ev);
 }
 function moveTip(ev){
   const b = tip.getBoundingClientRect();
@@ -311,24 +483,193 @@ function moveTip(ev){
 }
 const hideTip = () => tip.classList.remove('show');
 
-// ---------- hero ----------
+// ---------------- session & shell ----------------
+async function boot(){
+  SESSION = await api('/api/session');
+  PHASES = SESSION.phases || [];
+  renderShell();
+
+  if(!SESSION.repo){ renderRecents(); showStage('stageOpen'); return; }
+  if(SESSION.scan.status === 'running'){ showStage('stageProgress'); pollScan(); return; }
+  if(!SESSION.has_data){ showStage('stageScan'); return; }
+  await loadResults();
+}
+
+function renderShell(){
+  const open = !!SESSION.repo;
+  $('#repoBtn').hidden = !open;
+  $('#scanBtn').hidden = !open;
+  $('#gateBtn').hidden = !open;
+  if(open){
+    $('#repoName').textContent = SESSION.repo.name;
+    $('#repoBtn').title = SESSION.repo.path;
+    renderGate();
+  }
+  const warn = $('#shallowNote');
+  if(warn) warn.hidden = !(open && SESSION.repo.shallow);
+}
+
+function renderGate(){
+  const on = SESSION.hook === 'installed';
+  const btn = $('#gateBtn');
+  btn.dataset.on = on;
+  $('#gateLabel').textContent = on ? 'Commit gate on' : 'Commit gate off';
+  btn.disabled = !SESSION.has_data;
+  btn.title = SESSION.has_data
+    ? (on ? 'Commits that spike complexity are blocked. Click to turn off.'
+          : 'Turn on to block commits that spike complexity.')
+    : 'Analyse the repository first — the gate needs a baseline to compare against.';
+}
+
+function renderRecents(){
+  for(const [listId, items] of [['#recents', SESSION.recents], ['#switchRecents', SESSION.recents]]){
+    const el = $(listId);
+    if(!items || !items.length){ el.hidden = true; continue; }
+    el.hidden = false;
+    el.innerHTML = `<li class="cap">Recent</li>` + items.map(r=>`
+      <li><button data-path="${esc(r.path)}">
+        <span class="nm">${esc(r.name)}</span>
+        <span class="pt">${esc(r.path)}</span>
+      </button></li>`).join('');
+    el.querySelectorAll('button[data-path]').forEach(b=>{
+      b.onclick = () => openRepo(b.dataset.path);
+    });
+  }
+}
+
+async function openRepo(path, errTarget){
+  const err = $(errTarget || '#openErr');
+  err.textContent = '';
+  try{
+    const r = await post('/api/repo', { path });
+    $('#repoDialog').close();
+    if(r && r.cloning){
+      // A URL clones and analyses as one job -- go straight to the progress view.
+      $('#progTitle').textContent = 'Downloading and analysing';
+      $('#progRepo').textContent = r.url;
+      $('#progErr').textContent = '';
+      renderPhases('clone');
+      showStage('stageProgress');
+      pollScan();
+      return;
+    }
+    await boot();
+  }catch(e){ err.textContent = e.message; }
+}
+
+$('#openForm').onsubmit = e => {
+  e.preventDefault();
+  openRepo($('#pathInput').value.trim(), '#openErr');
+};
+$('#switchForm').onsubmit = e => {
+  e.preventDefault();
+  openRepo($('#switchInput').value.trim(), '#switchErr');
+};
+$('#repoBtn').onclick = () => {
+  $('#switchInput').value = SESSION.repo ? SESSION.repo.path : '';
+  $('#switchErr').textContent = '';
+  $('#repoDialog').showModal();
+};
+$('#closeDialog').onclick = () => $('#repoDialog').close();
+
+// ---------------- scanning ----------------
+async function startScan(){
+  $('#progErr').textContent = '';
+  $('#progRepo').textContent = SESSION.repo.path;
+  $('#progTitle').textContent = 'Analysing';
+  renderPhases('');
+  showStage('stageProgress');
+  try{ await post('/api/scan'); pollScan(); }
+  catch(e){ $('#progErr').textContent = e.message; }
+}
+$('#scanBtn').onclick = startScan;
+$('#firstScanBtn').onclick = startScan;
+
+function renderPhases(active){
+  const idx = PHASES.findIndex(p => p.key === active);
+  $('#phaseList').innerHTML = PHASES.map((p,i)=>{
+    const s = idx < 0 ? '' : i < idx ? 'done' : i === idx ? 'active' : '';
+    return `<li data-s="${s}"><span class="dot"></span>${esc(p.label)}</li>`;
+  }).join('');
+}
+
+function pollScan(){
+  clearTimeout(pollTimer);
+  pollTimer = setTimeout(async ()=>{
+    let job;
+    try{ job = await api('/api/scan'); }
+    catch(e){ $('#progErr').textContent = e.message; return; }
+
+    renderPhases(job.phase);
+    if(job.status === 'running'){ pollScan(); return; }
+
+    if(job.status === 'error'){
+      $('#progTitle').textContent = 'Analysis failed';
+      $('#progErr').textContent = job.error || 'Unknown error';
+      return;
+    }
+    SESSION = await api('/api/session');
+    renderShell();
+    await loadResults();
+  }, 350);
+}
+
+// ---------------- gate toggle ----------------
+$('#gateBtn').onclick = async () => {
+  const btn = $('#gateBtn');
+  const turningOn = SESSION.hook !== 'installed';
+  btn.disabled = true;
+  try{
+    const r = await post('/api/hook', { action: turningOn ? 'install' : 'uninstall' });
+    SESSION.hook = r.status;
+  }catch(e){
+    // A foreign pre-commit hook already exists; confirm before replacing it.
+    if(turningOn && /already has a different/.test(e.message)){
+      if(confirm(e.message + '\n\nBack it up and install the RepoHealth gate?')){
+        try{
+          const r = await post('/api/hook', { action:'install', force:true });
+          SESSION.hook = r.status;
+        }catch(e2){ alert(e2.message); }
+      }
+    } else { alert(e.message); }
+  }finally{
+    btn.disabled = false; renderGate();
+  }
+};
+
+// ---------------- results ----------------
+async function loadResults(){
+  const [meta, health, trend, files, graph, cycles, cfg] = await Promise.all([
+    api('/api/meta'), api('/api/health'), api('/api/health/trend'),
+    api('/api/files'), api('/api/graph'), api('/api/cycles'), api('/api/config'),
+  ]);
+  DATA = { meta, health, trend, files, graph, cycles, cfg };
+  showStage('stageMain');
+  renderHero(health, trend, meta);
+  renderGraph(graph);
+  renderScatter(files);
+  renderCycles(cycles);
+  tableLimit = 25; renderTable();
+  renderConfig(cfg);
+}
+
 const LABEL = {
   churn_complexity:'Churn + complexity',
   cycles:'Circular imports',
-  blast_radius:'Fragile dependencies'
+  blast_radius:'Fragile dependencies',
 };
-function renderHero(h){
+function renderHero(h, trend, meta){
   $('#score').textContent = Math.round(h.score);
   $('#score').style.color = h.score>=80 ? 'var(--ink)' : h.score>=60 ? 'var(--r2)' : 'var(--r3)';
   $('#grade').textContent = h.grade;
-  $('#verdict').textContent = VERDICT(h.score);
+  $('#verdictText').textContent = VERDICT(h.score);
 
   const max = Math.max(...Object.values(h.contributions), 1);
   $('#pens').innerHTML = Object.keys(h.penalties).map(k=>`
     <div class="pen">
       <span>${LABEL[k]||k}</span>
-      <span class="track"><span class="fill" style="width:0" data-w="${(h.contributions[k]/max*100).toFixed(1)}"></span></span>
-      <span class="val num">−${h.contributions[k].toFixed(0)}</span>
+      <span class="track"><span class="fill" data-w="${(h.contributions[k]/max*100).toFixed(1)}"></span></span>
+      <span class="val">−${h.contributions[k].toFixed(0)}</span>
     </div>`).join('');
   requestAnimationFrame(()=>document.querySelectorAll('.pen .fill')
     .forEach(f=>f.style.width = f.dataset.w+'%'));
@@ -337,38 +678,85 @@ function renderHero(h){
   $('#facts').innerHTML = [
     [f.files,'files analysed'],
     [f.hotspot_files,'churn + complexity hotspots'],
-    [f.cycle_count,'cycles over '+f.files_in_cycles+' files'],
-    [f.fragile_files,'fragile dependencies']
-  ].map(([n,l])=>`<span><b class="num">${n}</b> ${l}</span>`).join('');
+    [f.cycle_count,`cycles over ${f.files_in_cycles} files`],
+    [f.fragile_files,'fragile dependencies'],
+  ].map(([n,l])=>`<span><b>${n}</b> ${l}</span>`).join('');
+
+  // Only worth showing when there is a mix. On a single-language repository
+  // the chip just repeats the file count above it.
+  const langs = (meta && meta.languages) || [];
+  $('#langs').innerHTML = langs.length > 1
+    ? langs.map(l=>`<span class="chip"><b>${l.files}</b> ${l.label}</span>`).join('')
+    : '';
+
+  renderTrend(trend);
 }
 
-// ---------- graph ----------
-let sim, gsel = {};
+// The score with its own history: the question is not "how bad is it" but
+// "is it getting better or worse". A single run cannot answer that, so the
+// chart is replaced by an invitation until a second run exists.
+function renderTrend(trend){
+  const svg = d3.select('#trend'); svg.selectAll('*').remove();
+  const W = 260, H = 54;
+  if(!trend || trend.length < 2){
+    svg.attr('width',0).attr('height',0);
+    $('#trendCap').textContent = 'Scan again after your next few commits to see the trend.';
+    return;
+  }
+  svg.attr('viewBox',`0 0 ${W} ${H}`).attr('width',W).attr('height',H);
+  const pts = trend.slice(-24);
+  const x = d3.scaleLinear().domain([0, pts.length-1]).range([3, W-3]);
+  const y = d3.scaleLinear().domain([0, 100]).range([H-6, 6]);
+
+  // The full 0-100 range as a track, so the line's height carries meaning.
+  svg.append('rect').attr('x',0).attr('y',0).attr('width',W).attr('height',H)
+     .attr('rx',6).attr('fill','var(--sunken)');
+  svg.append('line').attr('x1',3).attr('x2',W-3).attr('y1',y(100)).attr('y2',y(100))
+     .attr('stroke','var(--rule)').attr('stroke-width',1).attr('stroke-dasharray','2 3');
+
+  svg.append('path').datum(pts)
+    .attr('fill','none').attr('stroke','var(--accent)').attr('stroke-width',2)
+    .attr('stroke-linecap','round').attr('stroke-linejoin','round')
+    .attr('d', d3.line().x((d,i)=>x(i)).y(d=>y(d.score)));
+
+  svg.append('circle')
+    .attr('cx', x(pts.length-1)).attr('cy', y(pts[pts.length-1].score)).attr('r', 3.5)
+    .attr('fill','var(--accent)').attr('stroke','var(--raised)').attr('stroke-width',1.5);
+
+  const first = pts[0].score, last = pts[pts.length-1].score;
+  const delta = Math.round(last - first);
+  const dir = delta > 0 ? `up ${delta}` : delta < 0 ? `down ${-delta}` : 'unchanged';
+  $('#trendCap').textContent = `${dir} across ${pts.length} runs`;
+}
+
+// ---------------- graph ----------------
 function renderGraph(g){
-  const svg = d3.select('#graph');
-  svg.selectAll('*').remove();
-  const el = $('#graph'), W = el.clientWidth, H = el.clientHeight;
+  const svg = d3.select('#graph'); svg.selectAll('*').remove();
+  const el = $('#graph');
+  el.style.height = (g.nodes.length < 20 ? 340 : g.nodes.length < 60 ? 420 : 520) + 'px';
+  const W = el.clientWidth, H = el.clientHeight;
   svg.attr('viewBox', `0 0 ${W} ${H}`);
+  if(!g.nodes.length){
+    svg.append('text').attr('x',20).attr('y',32).attr('class','axlabel')
+       .text('No Python files in the last run.');
+    return;
+  }
 
-  if(!g.nodes.length){ svg.append('text').attr('x',20).attr('y',32).attr('class','axlabel')
-      .text('No Python files in the last run.'); return; }
-
-  const byId = new Map(g.nodes.map(n=>[n.id,n]));
   const inCyc = new Set();
   g.cycles.forEach(c=>c.forEach((p,i)=>inCyc.add(p+'>'+c[(i+1)%c.length])));
 
-  // Past a few hundred nodes a force layout is a hairball nobody can read.
-  // Keep the most-depended-on files, which is what the view is for, and say so.
+  // Past a few hundred nodes a force layout is a hairball. Keep the
+  // most-depended-on files, which is what the view is for, and say so.
   const CAP = 160;
   const shown = g.nodes.length > CAP
     ? [...g.nodes].sort((a,b)=>(b.blast_radius-a.blast_radius)||(b.cc-a.cc)).slice(0,CAP)
     : g.nodes;
-  const keepIds = new Set(shown.map(n=>n.id));
+  const keep = new Set(shown.map(n=>n.id));
   $('#gcount').textContent = g.nodes.length > CAP
     ? `Showing the ${CAP} most-depended-on of ${g.nodes.length} files.` : '';
 
   const nodes = shown.map(n=>({...n}));
-  const links = g.edges.filter(e=>keepIds.has(e.from)&&keepIds.has(e.to))
+  const links = g.edges.filter(e=>keep.has(e.from)&&keep.has(e.to))
     .map(e=>({source:e.from,target:e.to,cyc:inCyc.has(e.from+'>'+e.to)}));
 
   const maxB = d3.max(nodes,n=>n.blast_radius)||1;
@@ -390,9 +778,9 @@ function renderGraph(g){
   links.forEach(l=>{adj.get(l.source).add(l.target);adj.get(l.target).add(l.source);});
 
   node.on('mouseenter',(ev,d)=>{
-      const keep = adj.get(d.id); keep.add(d.id);
-      node.classed('dim',n=>!keep.has(n.id));
-      label.classed('dim',n=>!keep.has(n.id));
+      const k = adj.get(d.id); k.add(d.id);
+      node.classed('dim',n=>!k.has(n.id));
+      label.classed('dim',n=>!k.has(n.id));
       link.classed('dim',l=>l.source.id!==d.id&&l.target.id!==d.id)
           .classed('hot',l=>l.source.id===d.id||l.target.id===d.id);
       showTip(ev,d.id,[['complexity',d.cc],['churn',d.churn],
@@ -412,19 +800,14 @@ function renderGraph(g){
     .on('end',(ev,d)=>{if(!ev.active)sim.alphaTarget(0);d.fx=null;d.fy=null;}));
 
   // Forces scale with the graph: a dozen nodes need room to spread or they
-  // huddle in the middle of an empty frame, while a few hundred need a
-  // centring pull or they drift off-canvas entirely.
-  const n = nodes.length, small = n < 50;
-  const dist = small ? 110 : 46;
-  const rep  = small ? -700 : -130;
-  const pull = small ? .02 : .05;
-  // A force layout settles into a round blob, but the frame is roughly 3:1.
-  // Pulling harder on Y than X flattens the layout to the frame's aspect, so
-  // the fit is not height-bound with empty margins either side.
-  const aspect = W / H;
+  // huddle in an empty frame, while hundreds need a centring pull or they
+  // drift off-canvas. Y is pulled harder than X so the round blob a force
+  // layout settles into is flattened to the frame's aspect.
+  const small = nodes.length < 50, aspect = W / H;
+  const dist = small ? 110 : 46, rep = small ? -700 : -130, pull = small ? .02 : .05;
 
   let ticks = 0;
-  sim = d3.forceSimulation(nodes)
+  const sim = d3.forceSimulation(nodes)
     .force('link',d3.forceLink(links).id(d=>d.id).distance(dist).strength(.45))
     .force('charge',d3.forceManyBody().strength(rep))
     .force('center',d3.forceCenter(W/2,H/2))
@@ -440,55 +823,57 @@ function renderGraph(g){
     })
     .on('end',fit);
 
+  // Labels are centred on their node, so a node near the edge spills its text
+  // outside the frame unless the extent accounts for the text, not just the dot.
+  const labelled = new Set(label.data().map(n=>n.id));
+  const halfLabel = n => labelled.has(n.id) ? n.label.length * 2.8 : 0;
+
   function fit(){
     let x0=Infinity,x1=-Infinity,y0=Infinity,y1=-Infinity;
     for(const n of nodes){
       const rad = r(n.blast_radius) + 2;
-      if(n.x-rad<x0) x0=n.x-rad;
-      if(n.x+rad>x1) x1=n.x+rad;
-      if(n.y-rad-11<y0) y0=n.y-rad-11;   // label sits above the node
+      const reach = Math.max(rad, halfLabel(n));
+      if(n.x-reach<x0) x0=n.x-reach;
+      if(n.x+reach>x1) x1=n.x+reach;
+      if(n.y-rad-11<y0) y0=n.y-rad-11;
       if(n.y+rad>y1) y1=n.y+rad;
     }
     const pad=16, w=(x1-x0)||1, h=(y1-y0)||1;
-    // Cap the zoom: a handful of nodes would otherwise scale up until the
-    // labels collide. Labels are counter-scaled so text keeps one screen size.
     const k=Math.min((W-pad*2)/w,(H-pad*2)/h,1.25);
-    root.attr('transform',
-      `translate(${W/2-k*(x0+x1)/2},${H/2-k*(y0+y1)/2}) scale(${k})`);
+    root.attr('transform',`translate(${W/2-k*(x0+x1)/2},${H/2-k*(y0+y1)/2}) scale(${k})`);
     label.attr('font-size',(9/k).toFixed(2));
   }
 
   if(matchMedia('(prefers-reduced-motion:reduce)').matches){
-    sim.stop(); for(let i=0;i<220;i++) sim.tick();
-    sim.dispatch?.call?.('tick');
+    sim.stop();
+    for(let i=0;i<220;i++) sim.tick();
     link.attr('x1',d=>d.source.x).attr('y1',d=>d.source.y)
         .attr('x2',d=>d.target.x).attr('y2',d=>d.target.y);
     node.attr('cx',d=>d.x).attr('cy',d=>d.y);
     label.attr('x',d=>d.x).attr('y',d=>d.y-r(d.blast_radius)-3);
     fit();
   }
-  gsel = {node,link,label};
 }
 
-// ---------- scatter ----------
+// ---------------- scatter ----------------
 function renderScatter(files){
   const svg = d3.select('#scatter'); svg.selectAll('*').remove();
   const el = $('#scatter'), W = el.clientWidth, H = el.clientHeight;
   const m = {t:10,r:14,b:34,l:44};
   svg.attr('viewBox',`0 0 ${W} ${H}`);
   const pts = files.filter(f=>f.cc_total>0||f.churn>0);
-  if(!pts.length){ svg.append('text').attr('x',14).attr('y',28).attr('class','axlabel')
-      .text('Nothing to plot yet.'); return; }
-
-  // 8% headroom so a point at the maximum is not clipped by the frame
+  if(!pts.length){
+    svg.append('text').attr('x',14).attr('y',28).attr('class','axlabel').text('Nothing to plot yet.');
+    return;
+  }
   const xm = (d3.max(pts,p=>p.churn)||1)*1.08, ym = (d3.max(pts,p=>p.cc_total)||1)*1.08;
   const x = d3.scaleLinear().domain([0,xm]).nice().range([m.l,W-m.r]);
   const y = d3.scaleLinear().domain([0,ym]).nice().range([H-m.b,m.t]);
 
   svg.append('g').attr('transform',`translate(0,${H-m.b})`)
-    .call(d3.axisBottom(x).ticks(5).tickSize(-(H-m.t-m.b)));
+     .call(d3.axisBottom(x).ticks(5).tickSize(-(H-m.t-m.b)));
   svg.append('g').attr('transform',`translate(${m.l},0)`)
-    .call(d3.axisLeft(y).ticks(5).tickSize(-(W-m.l-m.r)));
+     .call(d3.axisLeft(y).ticks(5).tickSize(-(W-m.l-m.r)));
   svg.selectAll('.domain').attr('stroke','var(--rule-strong)');
   svg.append('text').attr('class','axlabel').attr('x',W-m.r).attr('y',H-6)
      .attr('text-anchor','end').text('commits touching the file');
@@ -496,7 +881,7 @@ function renderScatter(files){
      .attr('x',-m.t).attr('y',12).attr('text-anchor','end').text('cyclomatic complexity');
 
   svg.append('g').selectAll('circle').data(pts).join('circle')
-    .attr('class','dot').attr('cx',p=>x(p.churn)).attr('cy',p=>y(p.cc_total))
+    .attr('class','dot2').attr('cx',p=>x(p.churn)).attr('cy',p=>y(p.cc_total))
     .attr('r',5).attr('fill',p=>RISK[p.risk_level]||'var(--r1)')
     .on('mouseenter',(ev,p)=>showTip(ev,p.path,[['churn',p.churn],
       ['complexity',p.cc_total],['blast radius',p.blast_radius],['risk',p.risk_level]]))
@@ -504,16 +889,16 @@ function renderScatter(files){
     .on('click',(ev,p)=>focusRow(p.path));
 }
 
-// ---------- cycles ----------
+// ---------------- cycles ----------------
 function renderCycles(cy){
   const box = $('#cycles');
-  if(!cy.length){ box.innerHTML = `<p class="clean">No circular imports detected.</p>`; return; }
+  if(!cy.length){ box.innerHTML = `<p class="clear">No circular imports detected.</p>`; return; }
   box.innerHTML = `<ul class="cyclist">` + cy.map(c=>`
     <li><div class="chain">${c.chain.map(esc).join('<em>&rarr;</em>')}<em>&rarr;</em>${esc(c.chain[0])}</div>
     <div class="len">${c.length} files</div></li>`).join('') + `</ul>`;
 }
 
-// ---------- table ----------
+// ---------------- table ----------------
 let sortKey='risk_score', sortDir=-1, tableLimit=25;
 function renderTable(){
   const rows = [...DATA.files].sort((a,b)=>{
@@ -525,11 +910,12 @@ function renderTable(){
   $('#tcount').textContent = rows.length > page.length
     ? `Showing ${page.length} of ${rows.length} files, ranked by blast radius times churn times complexity.`
     : `${rows.length} files, ranked by blast radius times churn times complexity.`;
-  $('#more').hidden = rows.length <= page.length;
-  $('#more').textContent = `Show all ${rows.length} files`;
+  $('#moreBtn').hidden = rows.length <= page.length;
+  $('#moreBtn').textContent = `Show all ${rows.length} files`;
+
   $('#files tbody').innerHTML = page.map(f=>`
     <tr data-p="${esc(f.path)}">
-      <td class="path" title="${esc(f.path)}">${esc(f.path)}${f.in_cycle?'<span class="cyc-tag">cycle</span>':''}</td>
+      <td class="path" title="${esc(f.path)}">${esc(f.path)}${f.in_cycle?'<span class="cyctag">cycle</span>':''}</td>
       <td class="r num">${f.churn}</td>
       <td class="r num">${f.cc_total}</td>
       <td class="r num">${f.max_nesting}</td>
@@ -537,11 +923,12 @@ function renderTable(){
       <td class="r num">${f.refactor.hours?f.refactor.hours+'h':'—'}</td>
       <td><span class="lvl"><i style="background:${RISK[f.risk_level]}"></i>${esc(f.risk_level)}</span></td>
     </tr>`).join('');
+
   document.querySelectorAll('#files tbody tr').forEach(tr=>{
     tr.onclick = ()=>focusRow(tr.dataset.p);
     tr.onmouseenter = ev=>{
       const f = DATA.files.find(x=>x.path===tr.dataset.p);
-      if(f?.refactor.drivers.length) showTip(ev,f.path,f.refactor.drivers.map(d=>['',d]));
+      if(f && f.refactor.drivers.length) showTip(ev,f.path,f.refactor.drivers.map(d=>['',d]));
     };
     tr.onmousemove = moveTip; tr.onmouseleave = hideTip;
   });
@@ -550,12 +937,11 @@ function focusRow(path){
   document.querySelectorAll('#files tbody tr').forEach(tr=>{
     const on = tr.dataset.p===path;
     tr.classList.toggle('on',on);
-    if(on) tr.scrollIntoView({block:'center',behavior:
-      matchMedia('(prefers-reduced-motion:reduce)').matches?'auto':'smooth'});
+    if(on) tr.scrollIntoView({block:'center',
+      behavior: matchMedia('(prefers-reduced-motion:reduce)').matches?'auto':'smooth'});
   });
 }
-$('#more').onclick = ()=>{ tableLimit = Infinity; renderTable(); };
-
+$('#moreBtn').onclick = ()=>{ tableLimit = Infinity; renderTable(); };
 document.querySelectorAll('#files th[role=button]').forEach(th=>{
   const go = ()=>{
     const k = th.dataset.k;
@@ -566,7 +952,7 @@ document.querySelectorAll('#files th[role=button]').forEach(th=>{
   th.onkeydown = e => { if(e.key==='Enter'||e.key===' '){ e.preventDefault(); go(); } };
 });
 
-// ---------- config ----------
+// ---------------- config ----------------
 const FIELDS = [
   ['gatekeeper','complexity_spike_pct','Spike threshold (%)'],
   ['gatekeeper','baseline_window','Baseline window (runs)'],
@@ -579,70 +965,44 @@ function renderConfig(cfg){
   $('#cfg').innerHTML = FIELDS.map(([sec,key,label])=>`
     <div><label for="f_${key}">${label}</label>
     <input id="f_${key}" type="number" step="any" data-sec="${sec}" data-key="${key}"
-           value="${cfg[sec]?.[key] ?? ''}"></div>`).join('');
+           value="${(cfg[sec]&&cfg[sec][key]) ?? ''}"></div>`).join('');
 }
-$('#save').onclick = async ()=>{
+$('#saveCfg').onclick = async ()=>{
   const payload = {gatekeeper:{},thresholds:{}};
   document.querySelectorAll('#cfg input').forEach(i=>{
     const v = parseFloat(i.value);
     if(!Number.isNaN(v)) payload[i.dataset.sec][i.dataset.key] = v;
   });
-  const btn = $('#save'); btn.disabled = true;
+  const btn = $('#saveCfg'), msg = $('#savedMsg');
+  btn.disabled = true;
   try{
-    const r = await fetch('/api/config',{method:'PUT',
-      headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-    if(!r.ok) throw new Error((await r.json()).detail || 'save failed');
-    const msg = $('#savedmsg'); msg.textContent='Saved'; msg.classList.add('show');
-    setTimeout(()=>msg.classList.remove('show'),2200);
+    await api('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(payload)});
+    msg.textContent = 'Saved'; msg.style.color = 'var(--armed)';
+    msg.classList.add('show'); setTimeout(()=>msg.classList.remove('show'), 2200);
   }catch(e){
-    const msg = $('#savedmsg'); msg.textContent = e.message;
-    msg.style.color='var(--r3)'; msg.classList.add('show');
+    msg.textContent = e.message; msg.style.color = 'var(--r3)'; msg.classList.add('show');
   }finally{ btn.disabled = false; }
 };
 
-// ---------- theme ----------
-$('#theme').onclick = ()=>{
+// ---------------- theme ----------------
+$('#themeBtn').onclick = ()=>{
   const now = document.documentElement.dataset.theme;
   const dark = now==='dark' || (now!=='light' && matchMedia('(prefers-color-scheme:dark)').matches);
   document.documentElement.dataset.theme = dark ? 'light' : 'dark';
-  if(DATA.graph){ renderGraph(DATA.graph); renderScatter(DATA.files); renderTable(); }
+  if(DATA.graph){ renderGraph(DATA.graph); renderScatter(DATA.files);
+                  renderTrend(DATA.trend); renderTable(); }
 };
 
-// ---------- boot ----------
-(async function(){
-  try{
-    const [meta,health,files,graph,cycles,cfg] = await Promise.all([
-      get('/api/meta'),get('/api/health'),get('/api/files'),
-      get('/api/graph'),get('/api/cycles'),get('/api/config')
-    ]);
-    DATA = {meta,health,files,graph,cycles,cfg};
-
-    $('#repo').textContent = meta.repo.name;
-    const when = meta.run.completed_at
-      ? new Date(meta.run.completed_at).toLocaleString(undefined,
-          {day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})
-      : '';
-    $('#runmeta').innerHTML =
-      `<span>run ${meta.run.id}</span><span>${esc(when)}</span>` +
-      `<span>${meta.commits_ingested} commits</span>`;
-    $('#runmeta').style.display='contents';
-
-    // Unhide first: a hidden element reports clientWidth 0, which would
-    // collapse every SVG viewBox to nothing.
-    $('#main').hidden = false;
-    renderHero(health); renderGraph(graph); renderScatter(files);
-    renderCycles(cycles); renderTable(); renderConfig(cfg);
-  }catch(e){
-    $('#err').hidden = false;
-    $('#err').innerHTML = `<p>${esc(e.message)}</p>
-      <p>Run <code>repohealth scan</code> in the repository, then reload.</p>`;
-  }
-})();
-
 let rt;
-addEventListener('resize',()=>{ clearTimeout(rt); rt=setTimeout(()=>{
+addEventListener('resize',()=>{ clearTimeout(rt); rt = setTimeout(()=>{
   if(DATA.graph){ renderGraph(DATA.graph); renderScatter(DATA.files); }
-},200); });
+}, 200); });
+
+boot().catch(e=>{
+  showStage('stageOpen');
+  $('#openErr').textContent = e.message;
+});
 </script>
 </body>
 </html>

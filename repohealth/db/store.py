@@ -9,7 +9,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
-SCHEMA_PATH = Path(__file__).with_name("schema.sql")
+from ..resources import bundled
+
+SCHEMA_PATH = bundled("db", "schema.sql")
 DEFAULT_DB_NAME = "repohealth.db"
 
 
@@ -39,6 +41,26 @@ class Store:
 
     def _migrate(self) -> None:
         self.conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+        # CREATE TABLE IF NOT EXISTS leaves an existing table alone, so columns
+        # added in a later version have to be applied by hand. A database
+        # written before multi-language support has no `language` column, and
+        # every row in it predates anything but Python.
+        #
+        # The check and the ALTER are not atomic, and the dashboard opens
+        # several connections at once -- it fetches seven endpoints in
+        # parallel on page load. Without the guard below they all read the old
+        # schema, all try to add the column, one succeeds and the rest crash
+        # with "duplicate column name". Catching it is the fix: another
+        # connection having already done the work is success, not failure.
+        cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(file_metrics)")}
+        if "language" not in cols:
+            try:
+                self.conn.execute(
+                    "ALTER TABLE file_metrics ADD COLUMN language TEXT DEFAULT 'Python'"
+                )
+            except sqlite3.OperationalError as exc:
+                if "duplicate column" not in str(exc).lower():
+                    raise
         self.conn.commit()
 
     def upsert_repo(self, path: str, name: str) -> int:
@@ -137,13 +159,15 @@ class Store:
     def insert_file_metrics(self, run_id: int, metrics: Sequence[dict[str, Any]]) -> None:
         self.conn.executemany(
             """INSERT INTO file_metrics
-               (run_id, path, cc_total, cc_max, cc_avg, loc, num_functions,
-                num_classes, max_class_loc, max_nesting, parsed, parse_error)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+               (run_id, path, language, cc_total, cc_max, cc_avg, loc,
+                num_functions, num_classes, max_class_loc, max_nesting,
+                parsed, parse_error)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             [
                 (
                     run_id,
                     m["path"],
+                    m.get("language", "Python"),
                     m.get("cc_total", 0),
                     m.get("cc_max", 0),
                     m.get("cc_avg", 0.0),

@@ -7,6 +7,7 @@ from typing import Any, Iterator
 
 from git import InvalidGitRepositoryError, Repo
 
+from .. import lang as _lang
 from ..config import is_excluded
 
 
@@ -88,7 +89,7 @@ def iter_commits(
                 continue
             added, deleted, path = bits
             path = _rename_target(path).replace("\\", "/")
-            if python_only and not path.endswith(".py"):
+            if python_only and not _lang.is_source(path):
                 continue
             if is_excluded(path, exclude):
                 continue
@@ -113,21 +114,37 @@ def iter_commits(
         }
 
 
-def python_files(repo: Repo, exclude: list[str] | None = None) -> list[str]:
-    """Tracked .py files in the working tree, repo-relative, excludes applied."""
+def source_files(
+    repo: Repo, exclude: list[str] | None = None, languages: set[str] | None = None
+) -> list[str]:
+    """Tracked source files in the working tree, repo-relative, excludes applied.
+
+    One `git ls-files` call covering every supported extension, rather than one
+    per language: the subprocess round trip costs more than the extra output.
+    `languages` is a set of labels ("Python", "Java") that narrows the result.
+    """
     exclude = exclude or []
     root = Path(repo.working_tree_dir)
+    patterns = [f"*{ext}" for ext in _lang.ALL_EXTENSIONS]
     out = []
-    for entry in repo.git.ls_files("*.py").splitlines():
+    for entry in repo.git.ls_files(*patterns).splitlines():
         entry = entry.strip().replace("\\", "/")
         if not entry or is_excluded(entry, exclude):
+            continue
+        if not _lang.is_source(entry, languages):
             continue
         if (root / entry).is_file():
             out.append(entry)
     return sorted(out)
 
 
-def staged_python_files(repo: Repo, exclude: list[str] | None = None) -> list[str]:
+# The old name, kept so nothing that still calls it breaks.
+python_files = source_files
+
+
+def staged_source_files(
+    repo: Repo, exclude: list[str] | None = None, languages: set[str] | None = None
+) -> list[str]:
     """Python files staged for the pending commit -- the gatekeeper's input.
 
     Uses `git diff --cached --name-only --diff-filter=ACMR`, which reports
@@ -144,13 +161,16 @@ def staged_python_files(repo: Repo, exclude: list[str] | None = None) -> list[st
     paths = []
     for entry in out.splitlines():
         entry = entry.strip().replace("\\", "/")
-        if not entry or not entry.endswith(".py"):
+        if not entry or not _lang.is_source(entry, languages):
             continue
         if is_excluded(entry, exclude):
             continue
         if (root / entry).is_file():
             paths.append(entry)
     return sorted(set(paths))
+
+
+staged_python_files = staged_source_files
 
 
 def staged_blob(repo: Repo, rel_path: str) -> str | None:
