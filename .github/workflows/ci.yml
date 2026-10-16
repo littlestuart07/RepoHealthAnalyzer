@@ -1,0 +1,50 @@
+name: CI - RepoHealth Tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dashboard,dev]" pytest-cov bandit
+
+      - name: Configure git identity for tests
+        run: |
+          git config --global user.email "ci@example.com"
+          git config --global user.name "CI"
+
+      - name: Tool 1 - pytest with coverage
+        run: python -m pytest -o addopts="" -v --cov=repohealth --cov-report=term --cov-report=xml
+
+      - name: Tool 2 - Bandit security scan
+        run: bandit -r repohealth -ll
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-xml
+          path: coverage.xml
+
+      - name: Tool 3 - SonarCloud scan
+        if: ${{ env.SONAR_TOKEN != '' }}
+        uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # v8.3.0
