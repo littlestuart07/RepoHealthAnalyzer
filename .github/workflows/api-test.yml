@@ -1,0 +1,65 @@
+name: API Test - Schemathesis
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  api-fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dashboard]" schemathesis==4.31.1
+
+      - name: Create a throwaway repository with a circular import
+        run: |
+          mkdir -p "$RUNNER_TEMP/target/pkg"
+          cd "$RUNNER_TEMP/target"
+          git init -q
+          git config user.email "ci@example.com"
+          git config user.name "CI"
+          touch pkg/__init__.py
+          printf 'from pkg import b\n' > pkg/a.py
+          printf 'from pkg import c\n' > pkg/b.py
+          printf 'from pkg import a\n' > pkg/c.py
+          git add -A
+          git commit -qm init
+          repohealth scan .
+
+      - name: Start the dashboard API
+        run: |
+          cd "$RUNNER_TEMP/target"
+          nohup python -c "from repohealth.api.server import serve; serve('.', port=8765)" > "$RUNNER_TEMP/server.log" 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8765/openapi.json -o /dev/null && exit 0
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/server.log"
+          exit 1
+
+      - name: Tool 4 - Schemathesis, no server errors and schemas conform
+        run: |
+          schemathesis run http://127.0.0.1:8765/openapi.json \
+            --checks not_a_server_error,response_schema_conformance \
+            --max-examples 100 --phases fuzzing,examples --workers 1
+
+      - name: Schemathesis, documented status codes (informational)
+        continue-on-error: true
+        run: |
+          schemathesis run http://127.0.0.1:8765/openapi.json \
+            --checks status_code_conformance \
+            --max-examples 25 --phases fuzzing,examples --workers 1
